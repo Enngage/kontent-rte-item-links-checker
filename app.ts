@@ -92,9 +92,9 @@ const run = async () => {
     );
   } else {
     console.log(
-      `Saving records with missing content item links in RTE '${yellow(
-        csvFilename
-      )}'`
+      `Saving '${yellow(
+        missingRteRecords.length.toString()
+      )}' invalid content item links to file '${yellow(csvFilename)}'`
     );
 
     const headers: { id: string; title: string }[] = [
