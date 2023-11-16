@@ -1,11 +1,19 @@
-import { createDeliveryClient, IContentItem } from "@kontent-ai/delivery-sdk";
-import striptags from "striptags";
-import { green, yellow } from "colors";
+import {
+  createDeliveryClient,
+  Elements,
+  ElementType,
+  IContentItem,
+} from "@kontent-ai/delivery-sdk";
+import { green, red, yellow } from "colors";
 import { createObjectCsvWriter } from "csv-writer";
+import { extractLinksFromRichTextElement } from "./helpers";
+import { csvFilename, deliveryClient } from "./config";
 
 interface MissingLinkRteRecord {
   contentItem: IContentItem;
   elementCodename: string;
+  linkText: string | undefined;
+  linkedItemId: string;
 }
 
 interface IRecord {
@@ -13,12 +21,9 @@ interface IRecord {
   codename: string;
   name: string;
   element: string;
+  linkText: string;
+  linkedItemId: string;
 }
-
-const deliveryClient = createDeliveryClient({
-  environmentId: "2542ce4a-3be3-01e8-fdf0-ce1b87b58f11",
-});
-const csvFilename = `missing-rte-items.csv`;
 
 const run = async () => {
   const items = (
@@ -42,45 +47,86 @@ const run = async () => {
   );
 
   for (const item of items) {
-    missingRteRecords.push({
-      contentItem: item,
-      elementCodename: "hello",
-    });
+    for (const [elementCodename, element] of Object.entries(item.elements)) {
+      if (element.type === ElementType.RichText) {
+        const linksInRte = extractLinksFromRichTextElement({
+          richTextElement: element as Elements.RichTextElement,
+        });
+
+        for (const link of linksInRte) {
+          if (link.linkItemId) {
+            // check if item exists
+            const linkedItem = items.find(
+              (m) => m.system.id === link.linkItemId
+            );
+
+            if (!linkedItem) {
+              missingRteRecords.push({
+                contentItem: item,
+                elementCodename: elementCodename,
+                linkedItemId: link.linkItemId,
+                linkText: link.linkText,
+              });
+
+              console.log(
+                `${red(
+                  "[Missing link]"
+                )}: Found missing linked item in '${yellow(
+                  item.system.codename
+                )}' (${green(item.system.name)}) within element '${yellow(
+                  elementCodename
+                )}' (${green(element.name)}). The link text is '${yellow(
+                  link.linkText ?? "n/a"
+                )}'`
+              );
+            }
+          }
+        }
+      }
+    }
   }
 
-  console.log(
-    `Saving records with missing content item links in RTE '${yellow(
-      csvFilename
-    )}'`
-  );
+  if (missingRteRecords.length === 0) {
+    console.log(
+      `${green("Success! No missing linked items in RTE were found.")}`
+    );
+  } else {
+    console.log(
+      `Saving records with missing content item links in RTE '${yellow(
+        csvFilename
+      )}'`
+    );
 
-  const headers: { id: string; title: string }[] = [
-    { id: "id", title: "Id" },
-    { id: "name", title: "Name" },
-    { id: "codename", title: "Codename" },
-    { id: "element", title: "Element" },
-  ];
+    const headers: { id: string; title: string }[] = [
+      { id: "id", title: "Id" },
+      { id: "name", title: "Name" },
+      { id: "codename", title: "Codename" },
+      { id: "element", title: "Element" },
+    ];
 
-  const csvWriter = createObjectCsvWriter({
-    path: csvFilename,
-    alwaysQuote: true,
-    header: headers,
-  });
+    const csvWriter = createObjectCsvWriter({
+      path: csvFilename,
+      alwaysQuote: true,
+      header: headers,
+    });
 
-  const records = missingRteRecords.map((m) => {
-    const record: IRecord = {
-      id: m.contentItem.system.id,
-      name: m.contentItem.system.name,
-      codename: m.contentItem.system.codename,
-      element: m.contentItem.system.lastModified,
-    };
+    const records = missingRteRecords.map((m) => {
+      const record: IRecord = {
+        id: m.contentItem.system.id,
+        name: m.contentItem.system.name,
+        codename: m.contentItem.system.codename,
+        element: m.contentItem.system.lastModified,
+        linkText: m.linkText ?? "n/a",
+        linkedItemId: m.linkedItemId,
+      };
 
-    return record;
-  });
+      return record;
+    });
 
-  await csvWriter.writeRecords(records);
+    await csvWriter.writeRecords(records);
 
-  console.log(`File '${yellow(csvFilename)}' successfully created`);
+    console.log(`File '${yellow(csvFilename)}' successfully created`);
+  }
 };
 
 run();
